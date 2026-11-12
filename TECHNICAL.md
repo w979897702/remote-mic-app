@@ -223,3 +223,11 @@ Sparkle `2.9.6` 通过 SwiftPM 嵌入应用。更新源和 EdDSA 公钥位于应
 ## 许可与来源
 
 本仓库中的 macOS App、驱动及相关软件代码按 `GPL-3.0-only` 发布；iOS App 已由独立私有仓库维护。macOS App 的 Logo 与 App Icon 按独立的 [Logo 许可](LOGO-LICENSE.md) 管理。ATVV 与 RC003 行为参考 `xxb26553663-star/remote-bridge-hub`，豆包兼容驱动基于固定版本 BlackHole 构建；完整归属与限制见 [COPYRIGHT.md](COPYRIGHT.md) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 个人自用公开开发包
+
+在仓库根目录运行 `SAYALL_LOCAL_BUILD_MODE=public scripts/package-local-test-app.sh`，修改源码后重复同一命令即可重新构建、替换并启动 `~/Applications/SayAll.app`。安装失败时使用脚本既有 Downloads 回退目录。构建号自动递增，包记录源码 SHA、dirty 状态与 local 通道。
+
+此模式仅用于本机自用，使用本机 Apple Development 证书，不要求 Developer ID、私有构件或 Sentry；不得用于分发。首次自动选择唯一的 Apple Development 身份，并把非秘密证书指纹固定在 `~/.sayall-local-signing-identity`；后续构建复用同一身份，证书不可用时停止，不回退 ad-hoc。多证书时须通过 `CODE_SIGN_IDENTITY` 指定证书指纹。公开兼容层不提供私有手机、Watch、Web 遥控等能力。系统权限需用户授权；从 ad-hoc 切换为开发证书时需重新授权一次，后续相同 Bundle ID 和开发身份保持稳定的 designated requirement。证书更换、失效或系统撤销权限时仍可能需要重新授权；虚拟麦克风驱动不由此脚本安装。默认不设置该变量时，仍按完整私有测试包要求执行。
+
+验证：运行上述命令，确认脚本的签名与包校验通过、安装位置正确、App 进程启动。再次执行应递增构建号并退出旧实例后替换。硬件语音、系统权限和第三方输入工具需另行实机验证，启动成功不代表这些流程已验收。

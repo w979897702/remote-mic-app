@@ -302,7 +302,13 @@ if [[ "$REQUIRE_RELEASE_BUILD_CHANNEL" == "1" && "$SAYALL_BUILD_CHANNEL" != "rel
   print -u2 "Protected release App must declare SayAllBuildChannel=release"
   exit 1
 fi
-if [[ "$SAYALL_BUILD_CHANNEL" == "local" || "$SAYALL_BUILD_CHANNEL" == "release" ]]; then
+LOCAL_PUBLIC_BUILD="$(plutil -extract SayAllLocalPublicBuild raw -o - "$PLIST" 2>/dev/null || true)"
+if [[ "$LOCAL_PUBLIC_BUILD" == true ]]; then
+  test "$SAYALL_BUILD_CHANNEL" = local
+  test "$(plutil -extract SayAllPrivateArtifactsIncluded raw -o - "$PLIST")" = false
+fi
+if [[ "$SAYALL_BUILD_CHANNEL" == release ||
+      ( "$SAYALL_BUILD_CHANNEL" == local && "$LOCAL_PUBLIC_BUILD" != true ) ]]; then
   REQUIRE_DIAGNOSTIC_SERVICE=1
 fi
 test -n "$(plutil -extract NSBluetoothAlwaysUsageDescription raw -o - "$PLIST")"

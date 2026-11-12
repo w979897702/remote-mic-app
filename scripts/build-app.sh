@@ -150,7 +150,19 @@ if [[ "$REQUIRE_RELEASE_BUILD_CHANNEL" == "1" && "$SAYALL_BUILD_CHANNEL" != "rel
   print -u2 "SAYALL_BUILD_CHANNEL=release is required for protected release builds"
   exit 1
 fi
-if [[ "$SAYALL_BUILD_CHANNEL" == "local" || "$SAYALL_BUILD_CHANNEL" == "release" ]]; then
+# 公开自用模式必须显式选择 local/public，不能用于分发通道。
+case "${SAYALL_LOCAL_PUBLIC_BUILD:-0}" in
+  0) ;;
+  1)
+    if [[ "$SAYALL_BUILD_CHANNEL" != local || "${SAYALL_PRIVATE_PLATFORM_MODE:-}" != public ]]; then
+      print -u2 "公开自用包必须使用 local 通道和 public 组件"
+      exit 1
+    fi
+    ;;
+  *) print -u2 "SAYALL_LOCAL_PUBLIC_BUILD 必须为 0 或 1"; exit 1 ;;
+esac
+if [[ "$SAYALL_BUILD_CHANNEL" == release ||
+      ( "$SAYALL_BUILD_CHANNEL" == local && "${SAYALL_LOCAL_PUBLIC_BUILD:-0}" != 1 ) ]]; then
   REQUIRE_DIAGNOSTIC_SERVICE=1
 fi
 if [[ "$REQUIRE_DIAGNOSTIC_SERVICE" == "1" && -z "$REMOTE_MIC_SENTRY_DSN" ]]; then
@@ -708,6 +720,10 @@ if [[ -n "$SAYALL_BUILD_CHANNEL" ]]; then
     "$APP_DIR/Contents/Info.plist"
 fi
 plutil -remove SayAllAIIncluded "$APP_DIR/Contents/Info.plist" 2>/dev/null || true
+if [[ "${SAYALL_LOCAL_PUBLIC_BUILD:-0}" == 1 ]]; then
+  plutil -insert SayAllLocalPublicBuild -bool true "$APP_DIR/Contents/Info.plist"
+fi
+
 plutil -insert SayAllAIIncluded -bool "$SAYALL_AI_INCLUDED" \
   "$APP_DIR/Contents/Info.plist"
 plutil -remove SayAllCombinationActionsIncluded "$APP_DIR/Contents/Info.plist" 2>/dev/null || true

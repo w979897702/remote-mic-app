@@ -11,7 +11,7 @@ struct BuildSigningTests {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appendingPathComponent("scripts/package-local-test-app.sh"), encoding: .utf8)
         let start = try #require(source.range(of: "platform_version="))
-        let end = try #require(source.range(of: "zmodload zsh/system", range: start.upperBound..<source.endIndex))
+        let end = try #require(source.range(of: "\nfi\n\nzmodload zsh/system", range: start.upperBound..<source.endIndex))
         let preflight = source[start.lowerBound..<end.lowerBound]
         let harness = """
         set -euo pipefail
