@@ -5534,6 +5534,29 @@ struct RemoteButtonsTests {
         #expect(performed.first?.2 == .deleteBackward)
         #expect(overrideTriggers.isEmpty)
         #expect(scheduler.pendingTaskCount == 0)
+
+        // 向导观察真实边沿，但不启用自定义映射或执行返回键删除。
+        settings.setOnboardingControlSource(.xiaomiRemote)
+        settings.setOnboardingStep(.controls)
+        var observed: [RemoteButton] = []
+        monitor.onButtonPressed = { _, _, button in
+            observed.append(button)
+            return (profileID, false)
+        }
+        for button in [RemoteButton.up, .down, .ok, .back] {
+            let down = Data([UInt8(button.hidUsage), 0, 0, 0, 0, 0])
+            monitor.handleSimulatedBackOnlyReport(reportID: 1, data: down)
+            monitor.handleSimulatedBackOnlyReport(reportID: 1, data: down)
+            monitor.handleSimulatedBackOnlyReport(reportID: 1, data: release)
+        }
+        #expect(observed == [.up, .down, .ok, .back])
+        #expect(performed.count == 1)
+        #expect(!settings.customMappingEnabled)
+        settings.setOnboardingStep(.complete)
+        monitor.handleSimulatedBackOnlyReport(reportID: 1, data: backDown)
+        monitor.handleSimulatedBackOnlyReport(reportID: 1, data: release)
+        #expect(performed.count == 2)
+        #expect(observed.count == 4)
     }
 
     @Test(arguments: [UInt16(10), UInt16(50)])

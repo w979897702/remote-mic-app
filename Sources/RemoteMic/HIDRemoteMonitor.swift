@@ -1114,7 +1114,7 @@ final class HIDRemoteMonitor {
                 "usage_count=\(usages.count) buttons=\(Self.buttonList(for: usages))"
         )
         if backOnlyMode {
-            processBackOnly(usages: usages.intersection([RemoteButton.back.hidUsage]))
+            processBackOnly(usages: usages)
         } else {
             process(usages: usages, timestampNanoseconds: timestampNanoseconds)
         }
@@ -1357,6 +1357,24 @@ final class HIDRemoteMonitor {
     }
 
     private func processBackOnly(usages: Set<UInt16>) {
+        if settings.onboardingControlSource == .xiaomiRemote,
+           OnboardingControlValidationPolicy.suppressConfiguredActions(
+               at: settings.onboardingStep, source: settings.onboardingControlSource
+           ) {
+            // 向导独立观察普通键，不借此开启映射，也不执行返回键删除。
+            let pressed = usages.subtracting(activeUsages)
+            activeUsages = usages
+            for usage in pressed.sorted() {
+                guard let button = RemoteButton.usageMap[usage], let deviceFingerprint else { continue }
+                if let routing = onButtonPressed?(profileID, deviceFingerprint, button) {
+                    profileID = routing.profileID
+                    diagnosticLogger("HID BUTTON button=\(button.rawValue) path=onboarding_back_only action=suppressed")
+                }
+            }
+            onActiveButtons?(profileID, RemoteButton.buttons(for: usages))
+            return
+        }
+        let usages = usages.intersection([RemoteButton.back.hidUsage])
         let pressed = usages.subtracting(activeUsages)
         activeUsages = usages
         onActiveButtons?(profileID, RemoteButton.buttons(for: usages))
