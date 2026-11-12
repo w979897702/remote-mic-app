@@ -11,6 +11,80 @@ struct ApplicationButtonMappingsTests {
         try run(AppSettings(defaults: defaults), defaults)
     }
 
+    @Test func interactionOverridesInheritAndPreserveExplicitOff() throws {
+        try withSettings { settings, defaults in
+            settings.customMappingEnabled = true
+            let device = settings.selectedRemoteProfileID
+            settings.setHoldMode(.repeatSingle, for: .left)
+            settings.setAllowsRapidPress(true, for: .home)
+            let store = settings.applicationMappings
+            let id = try #require(store.add(bundleIdentifier: "org.example.App", displayName: "App"))
+            store.activate(bundleIdentifier: "org.example.App")
+            #expect(settings.buttonInteractionSettings().mode(for: .left) == .repeatSingle)
+            #expect(store.writeInteraction(profile: id, device: device, button: .left) { $0.hold = .once })
+            #expect(store.writeInteraction(profile: id, device: device, button: .home) { $0.rapid = false })
+            #expect(settings.buttonInteractionSettings().mode(for: .left) == .once)
+            #expect(settings.allowsRapidPress(for: .home, profileID: device) == false)
+            #expect(settings.interactionSettings.mode(for: .left) == .repeatSingle)
+            #expect(settings.allowsRapidPress(for: .home))
+            #expect(store.interaction(profile: id, device: UUID(), button: .left) == nil)
+            let loaded = AppSettings(defaults: defaults)
+            loaded.applicationMappings.activate(bundleIdentifier: "org.example.App")
+            #expect(loaded.buttonInteractionSettings().mode(for: .left) == .once)
+            settings.customMappingEnabled = false
+            #expect(settings.buttonInteractionSettings().mode(for: .left) == .repeatSingle)
+            settings.customMappingEnabled = true
+            store.activate(bundleIdentifier: "org.example.Other")
+            #expect(settings.buttonInteractionSettings().mode(for: .left) == .repeatSingle)
+            store.activate(bundleIdentifier: "org.example.App")
+            #expect(store.writeInteraction(profile: id, device: device, button: .left) { $0.hold = nil })
+            #expect(settings.buttonInteractionSettings().mode(for: .left) == .repeatSingle)
+            settings.setHoldMode(.once, for: .left)
+            #expect(settings.buttonInteractionSettings().mode(for: .left) == .once)
+        }
+    }
+
+    @Test func timingOverridesAndBackupPreserveGlobalAndLegacyData() throws {
+        try withSettings { settings, _ in
+            settings.customMappingEnabled = true
+            let store = settings.applicationMappings
+            let id = try #require(store.add(bundleIdentifier: "org.example.App", displayName: "App"))
+            let model = XiaomiRemoteModel.rc003
+            let device = settings.registerBluetoothRemote(identifier: UUID())
+            settings.updateRemoteProfileModel(device, model: model)
+            settings.selectRemoteProfile(device)
+            let base = settings.buttonGestureTiming(for: model)
+            let timing = RemoteButtonGestureTiming(doubleClickMilliseconds: 150, longPressMilliseconds: 850,
+                repeatSingleStartMilliseconds: 250)
+            #expect(store.writeTiming(timing, profile: id, model: model))
+            store.activate(bundleIdentifier: "org.example.App")
+            #expect(settings.effectiveButtonGestureTiming(for: model) == timing)
+            #expect(settings.interactionSnapshot(for: .ok).settings.longPressMilliseconds == 850)
+            #expect(settings.interactionSnapshot(for: .ok).settings.doubleClickMilliseconds == 150)
+            #expect(settings.interactionSnapshot(for: .ok).repeatSingleStartMilliseconds == 250)
+            #expect(settings.buttonInteractionSettings(useActiveApplication: false).timing == base)
+            #expect(settings.buttonGestureTiming(for: model) == base)
+            let backup = try settings.exportedConfigurationData()
+            let object = try #require(JSONSerialization.jsonObject(with: backup) as? [String: Any])
+            #expect(object["formatVersion"] as? Int == 4)
+            let full = try MacConfigurationBackup(host: settings.completeConfigurationSnapshot(), components: nil)
+                .encoded(version: "2.0.0", build: "9")
+            let decoded = try MacConfigurationBackup.decode(full)
+            try withSettings { destination, _ in
+                try destination.applyPortableLocalSnapshot(destination.validatedCompleteConfigurationSnapshot(decoded.host))
+                #expect(destination.applicationMappings.profiles == store.profiles)
+            }
+            #expect(store.writeTiming(nil, profile: id, model: model))
+            #expect(settings.effectiveButtonGestureTiming(for: model) == base)
+            try settings.importConfiguration(from: backup)
+            #expect(store.timing(profile: id, model: model) == timing)
+            let legacy = Data("[{\"id\":\"\(UUID().uuidString)\",\"bundleIdentifier\":\"org.example.Legacy\",\"displayName\":\"Legacy\",\"bindings\":[]}]".utf8)
+            let profiles = try JSONDecoder().decode([ApplicationButtonMapping].self, from: legacy)
+            #expect(profiles.first?.interactions == nil)
+            #expect(profiles.first?.timings == nil)
+        }
+    }
+
     @Test func sparseOverridesFollowForegroundAndLiveGlobalChanges() throws {
         try withSettings { settings, _ in
             settings.customMappingEnabled = true

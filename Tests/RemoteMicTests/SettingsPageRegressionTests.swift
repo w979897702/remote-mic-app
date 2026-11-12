@@ -1427,7 +1427,7 @@ struct SettingsPageRegressionTests {
         #expect(source.contains("button_mapping.permission_prompt.open"))
         #expect(source.contains("mappingVoiceKeyModeControl"))
         #expect(source.contains("Text(\"button_mapping.rapid_press\")"))
-        #expect(source.contains("set: { settings.setAllowsRapidPress($0, for: button) }"))
+        #expect(source.contains("settings.setAllowsRapidPress(enabled, for: button)"))
         #expect(source.contains("button_mapping.hold.rapid_press_description"))
         #expect(source.contains("button_mapping.rapid_press_help"))
         #expect(source.contains("hardwareMappingPage(includeSiriScrollArrow: true)"))

@@ -2173,7 +2173,13 @@ struct SettingsView: View {
                 settings.applicationMappings.reload()
             } matches: {
                 settings.applicationMappings.binding(profile: application, device: device, button: button, trigger: trigger) == configured
-            } reconcileHold: { }
+            } reconcileHold: {
+                if let mode = settings.applicationMappings.interaction(profile: application,
+                    device: device, button: button)?.hold,
+                   !mappingHoldSnapshot(for: button).blockers(for: mode).isEmpty {
+                    saveApplicationHoldMode(.once, button: button)
+                }
+            }
             mappingActionSave.record(outcome, retry: .action(configured),
                 target: .init(profileID: application, deviceID: device, button: button, trigger: trigger))
             return
@@ -2400,6 +2406,7 @@ struct SettingsView: View {
                     .onChange(of: editingApplicationMappingID) { _ in
                         editingMappingProfileID = nil
                         clearMappingSaveFeedback()
+                        loadGestureTimingDraft()
                         mappingHoldEditingButton = nil
                         isMappingVoiceSettingsPresented = false
                     }
@@ -2816,7 +2823,6 @@ struct SettingsView: View {
                                     }
                                     if mappingActionFilter == .all || mappingActionFilter == .buttonSpeed {
                                         mappingGestureTimingSection
-                                            .disabled(editingApplicationMappingID != nil)
                                             .id("mapping-button-speed-tab")
                                     }
                                 }
@@ -2944,7 +2950,7 @@ struct SettingsView: View {
                     else { return }
                     gestureTimingDraft = result.suggestedTiming
                     gestureTimingSaveConfirmed = false
-                    if let learnedModel = gestureTimingDraftModel {
+                    if editingApplicationMappingID == nil, let learnedModel = gestureTimingDraftModel {
                         settings.setButtonGestureLearning(
                             StoredButtonGestureLearning(
                                 singleClickMilliseconds: result.singleClickMilliseconds,
@@ -3124,7 +3130,7 @@ struct SettingsView: View {
     }
 
     private func canWriteMappingHold(_ button: RemoteButton) -> Bool {
-        guard editingApplicationMappingID == nil else { return false }
+        guard editingApplicationMappingID == nil || !settings.applicationMappings.storageUnavailable else { return false }
         guard !isMappingProfilePreviewOnly else { return false }
         if let profile = editingMappingProfileID {
             if case .unavailable = macroFeature.displayProfileHoldMode(profile: profile, button: button) { return false }
@@ -3194,7 +3200,7 @@ struct SettingsView: View {
                     )
                 }
 
-                if editingApplicationMappingID != nil {
+                if let application = editingApplicationMappingID {
                     HStack {
                         Text(isApplicationBindingInherited(target) ? "button_mapping.app.inherited" : "button_mapping.app.overridden")
                             .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -3840,6 +3846,9 @@ struct SettingsView: View {
     }
 
     private func mappingHoldMode(for button: RemoteButton) -> RemoteButtonHoldMode {
+        if let application = editingApplicationMappingID,
+           let mode = settings.applicationMappings.interaction(profile: application,
+               device: settings.selectedRemoteProfileID, button: button)?.hold { return mode }
         if let profile = editingMappingProfileID, macroFeature.supportsProfileButton(button.rawValue) {
             switch macroFeature.displayProfileHoldMode(profile: profile, button: button) {
             case let .explicit(mode): return mode
@@ -3863,7 +3872,7 @@ struct SettingsView: View {
             case .inherited: mode = settings.interactionSettings.mode(for: button)
             case .unavailable: return localization.text("button_mapping.save.unavailable")
             }
-        } else { mode = settings.interactionSettings.mode(for: button) }
+        } else { mode = mappingHoldMode(for: button) }
         guard let mode, mode != .once else {
             return localization.text("button_mapping.hold.entry")
         }
@@ -3895,6 +3904,10 @@ struct SettingsView: View {
     private func setMappingHoldMode(_ mode: RemoteButtonHoldMode, for button: RemoteButton, parentOperationID: String? = nil) {
         guard !mode.isHoldDown || button.allowsKeyHold else { return }
         guard canWriteMappingHold(button) else { return }
+        if editingApplicationMappingID != nil {
+            saveApplicationHoldMode(mode, button: button)
+            return
+        }
         let profile = editingMappingProfileID
         let device = settings.selectedRemoteProfileID
         mappingHoldSave = .init()
@@ -3918,6 +3931,34 @@ struct SettingsView: View {
         AppLogger.shared.write("BUTTON CONFIGURATION operation_id=\(operationID) scope=\(profile == nil ? "base" : "profile") button=\(button.rawValue) action=hold phase=completed result=\(String(describing: outcome)) reason=\(outcome == .saved ? "storage_confirmed" : outcome == .unknown ? "reload_failed" : "storage_failed")")
     }
 
+    private func saveApplicationHoldMode(_ mode: RemoteButtonHoldMode?, button: RemoteButton) {
+        guard let application = editingApplicationMappingID else { return }
+        let device = settings.selectedRemoteProfileID
+        let outcome = ButtonMappingWriteRecovery.perform {
+            settings.applicationMappings.writeInteraction(profile: application, device: device, button: button) { $0.hold = mode }
+        } reload: {
+            settings.applicationMappings.reload()
+        } matches: {
+            settings.applicationMappings.interaction(profile: application, device: device, button: button)?.hold == mode
+        }
+        mappingHoldSave.record(outcome, retry: .hold(mode ?? .once),
+            target: .init(profileID: application, deviceID: device, button: button, trigger: nil))
+        mappingHoldSave.holdActions = ButtonTrigger.allCases.map { mappingConfiguration(for: button, trigger: $0) }
+        mappingHoldSave.holdMode = mappingHoldMode(for: button)
+        // 恢复继承失败后仍可再次点“沿用全局”，不能把重试变成显式清除。
+        if mode == nil { mappingHoldSave.retry = nil }
+        if outcome != .saved { showApplicationInteractionSaveFailure() }
+    }
+
+    private func showApplicationInteractionSaveFailure() {
+        NoticeCenter.shared.show(Notice(tier: .error, title: localization.text("button_mapping.save.unknown")))
+    }
+
+    private func editingGestureTiming(for model: XiaomiRemoteModel) -> RemoteButtonGestureTiming {
+        editingApplicationMappingID.flatMap { settings.applicationMappings.timing(profile: $0, model: model) }
+            ?? settings.buttonGestureTiming(for: model)
+    }
+
     private func clearMappingHoldFeedbackForChangedButton() {
         let button = mappingEditingTarget?.button ?? mappingHoldEditingButton
         if mappingHoldSave.target?.button != button { mappingHoldSave = .init() }
@@ -3925,7 +3966,7 @@ struct SettingsView: View {
 
     private func invalidateChangedMappingHoldRetry() {
         guard mappingHoldSave.retry != nil, let target = mappingHoldSave.target else { return }
-        guard target.profileID == editingMappingProfileID, target.deviceID == settings.selectedRemoteProfileID,
+        guard target.profileID == (editingApplicationMappingID ?? editingMappingProfileID), target.deviceID == settings.selectedRemoteProfileID,
               mappingHoldSave.holdActions == ButtonTrigger.allCases.map({ mappingConfiguration(for: target.button, trigger: $0) }),
               mappingHoldSave.holdMode == mappingHoldMode(for: target.button)
         else { mappingHoldSave = .init(); return }
@@ -3951,7 +3992,7 @@ struct SettingsView: View {
     }
 
     private func mappingHoldSnapshot(for button: RemoteButton) -> RemoteButtonInteractionSnapshot {
-        let currentInteractionSettings = settings.buttonInteractionSettings()
+        let currentInteractionSettings = settings.buttonInteractionSettings(applicationID: editingApplicationMappingID, useActiveApplication: false)
         var snapshot = RemoteButtonInteractionSnapshot(settings: currentInteractionSettings,
             mode: mappingHoldMode(for: button),
             single: mappingConfiguration(for: button, trigger: .singleClick),
@@ -4017,9 +4058,7 @@ struct SettingsView: View {
                         .padding(.vertical, 4)
                         .background(Color.accentColor.opacity(0.12), in: Capsule())
                     Spacer()
-                    if editingApplicationMappingID == nil {
-                        mappingSaveStatus(button: button, trigger: nil, holdOnly: true)
-                    }
+                    mappingSaveStatus(button: button, trigger: nil, holdOnly: true)
                     Button("button_mapping.hold.clear") {
                         setMappingHoldMode(.once, for: button)
                     }
@@ -4028,9 +4067,16 @@ struct SettingsView: View {
                     .help(localization.text("button_mapping.hold.clear.help"))
                 }
 
-                if editingApplicationMappingID != nil {
-                    Text("button_mapping.app.hold_global")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                if let application = editingApplicationMappingID {
+                    HStack {
+                        Text(settings.applicationMappings.interaction(profile: application,
+                            device: settings.selectedRemoteProfileID, button: button)?.hold == nil
+                            ? "button_mapping.app.inherited" : "button_mapping.app.overridden")
+                        Button("button_mapping.app.restore") { saveApplicationHoldMode(nil, button: button) }
+                            .disabled(settings.applicationMappings.interaction(profile: application,
+                                device: settings.selectedRemoteProfileID, button: button)?.hold == nil)
+                    }
+                    .font(.system(size: 12))
                 }
                 Text("button_mapping.hold.target")
                     .font(.system(size: 13, weight: .semibold))
@@ -4059,7 +4105,8 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if snapshot.single.action != .disabled, !snapshot.single.action.allowsRepeat {
+                if editingApplicationMappingID != nil ||
+                    (snapshot.single.action != .disabled && !snapshot.single.action.allowsRepeat) {
                     Divider().padding(.top, 2)
                     mappingRapidPressControl(button: button)
                         .disabled(!canWriteMappingHold(button))
@@ -4176,7 +4223,7 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Color.accentColor)
-                .disabled(profileUnsupported || editingApplicationMappingID != nil)
+                .disabled(profileUnsupported)
                 .padding(10)
             }
         }
@@ -4192,7 +4239,7 @@ struct SettingsView: View {
             model: selectedModel,
             isConnected: selectedProfileID.map(model.isRemoteConnected) ?? false
         )
-        let persistedTiming = selectedModel.map { settings.buttonGestureTiming(for: $0) }
+        let persistedTiming = selectedModel.map { editingGestureTiming(for: $0) }
             ?? RemoteButtonGestureTiming()
         return GlassPanel {
             VStack(alignment: .leading, spacing: 12) {
@@ -4208,6 +4255,19 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("button_mapping.timing_title")
                         .font(.system(size: 16, weight: .semibold))
+                    if let application = editingApplicationMappingID, let selectedModel {
+                        HStack {
+                            Text(settings.applicationMappings.timing(profile: application, model: selectedModel) == nil
+                                ? "button_mapping.app.inherited" : "button_mapping.app.overridden")
+                            Button("button_mapping.app.restore") {
+                                if settings.applicationMappings.writeTiming(nil, profile: application, model: selectedModel) {
+                                    loadGestureTimingDraft()
+                                } else { showApplicationInteractionSaveFailure() }
+                            }
+                            .disabled(settings.applicationMappings.timing(profile: application, model: selectedModel) == nil)
+                        }
+                        .font(.system(size: 12))
+                    }
                     HStack(alignment: .top, spacing: 18) {
                         gestureTimingSlider(
                             titleKey: "button_mapping.timing_double",
@@ -4244,8 +4304,14 @@ struct SettingsView: View {
                         Spacer()
                         Button("common.action.save") {
                             guard let selectedModel, selectedModel != .unknown else { return }
-                            settings.setButtonGestureTiming(gestureTimingDraft, for: selectedModel)
-                            gestureTimingSaveConfirmed = true
+                            if let application = editingApplicationMappingID {
+                                gestureTimingSaveConfirmed = settings.applicationMappings.writeTiming(gestureTimingDraft,
+                                    profile: application, model: selectedModel)
+                                if !gestureTimingSaveConfirmed { showApplicationInteractionSaveFailure() }
+                            } else {
+                                settings.setButtonGestureTiming(gestureTimingDraft, for: selectedModel)
+                                gestureTimingSaveConfirmed = true
+                            }
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(!availability.canSaveTiming || !gestureTimingDraft.isValid ||
@@ -4429,7 +4495,7 @@ struct SettingsView: View {
             return
         }
         gestureTimingDraftModel = selectedModel
-        gestureTimingDraft = settings.buttonGestureTiming(for: selectedModel)
+        gestureTimingDraft = editingGestureTiming(for: selectedModel)
         gestureTimingSaveConfirmed = false
         // 重开 App 或换机型回到这里时，用上次学习结果把「学习完成」补回来。
         if let stored = settings.buttonGestureLearning(for: selectedModel) {
@@ -4444,12 +4510,38 @@ struct SettingsView: View {
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
                 Toggle("", isOn: Binding(
-                    get: { settings.allowsRapidPress(for: button) },
-                    set: { settings.setAllowsRapidPress($0, for: button) }
+                    get: {
+                        editingApplicationMappingID.flatMap {
+                            settings.applicationMappings.interaction(profile: $0, device: settings.selectedRemoteProfileID, button: button)?.rapid
+                        } ?? settings.allowsRapidPress(for: button)
+                    },
+                    set: { enabled in
+                        if let application = editingApplicationMappingID {
+                            if !settings.applicationMappings.writeInteraction(profile: application,
+                                device: settings.selectedRemoteProfileID, button: button, update: { $0.rapid = enabled }) {
+                                showApplicationInteractionSaveFailure()
+                            }
+                        } else { settings.setAllowsRapidPress(enabled, for: button) }
+                    }
                 ))
-                .disabled(editingApplicationMappingID != nil)
                 .labelsHidden()
                 .toggleStyle(.switch)
+            }
+            if let application = editingApplicationMappingID {
+                HStack {
+                    Text(settings.applicationMappings.interaction(profile: application,
+                        device: settings.selectedRemoteProfileID, button: button)?.rapid == nil
+                        ? "button_mapping.app.inherited" : "button_mapping.app.overridden")
+                    Button("button_mapping.app.restore") {
+                        if !settings.applicationMappings.writeInteraction(profile: application,
+                            device: settings.selectedRemoteProfileID, button: button, update: { $0.rapid = nil }) {
+                            showApplicationInteractionSaveFailure()
+                        }
+                    }
+                    .disabled(settings.applicationMappings.interaction(profile: application,
+                        device: settings.selectedRemoteProfileID, button: button)?.rapid == nil)
+                }
+                .font(.system(size: 12))
             }
             Text("button_mapping.hold.rapid_press_description")
                 .font(.system(size: 12))

@@ -11,7 +11,7 @@ struct MacConfigurationBackup {
     func encoded(version: String, build: String) throws -> Data {
         let hostObject = try JSONSerialization.jsonObject(with: host)
         let configuration = (hostObject as? [String: Any])?["configuration"] as? [String: Any]
-        let schema = configuration?["formatVersion"] as? Int == 3 ? 3 : 2
+        let schema = max(2, configuration?["formatVersion"] as? Int ?? 2)
         var object: [String: Any] = [
             "format": Self.format, "schemaVersion": schema, "type": "personalBackup",
             "product": "SayAll", "platform": "macOS",
@@ -30,7 +30,7 @@ struct MacConfigurationBackup {
         guard data.count <= maximumBytes,
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               object["format"] as? String == format,
-              let schema = object["schemaVersion"] as? Int, [1, 2, 3].contains(schema),
+              let schema = object["schemaVersion"] as? Int, [1, 2, 3, 4].contains(schema),
               object["type"] as? String == "personalBackup",
               object["product"] as? String == "SayAll",
               object["platform"] as? String == platform, platform == "macOS",

@@ -1650,7 +1650,13 @@ final class AppSettings: ObservableObject {
         buttonRapidPressEnabled[button] ?? false
     }
 
+    func applicationRapidPress(for button: RemoteButton, profileID: UUID?) -> Bool? {
+        guard customMappingEnabled else { return nil }
+        return applicationMappings.activeProfile?.interaction(device: profileID ?? selectedRemoteProfileID, button: button)?.rapid
+    }
+
     func allowsRapidPress(for button: RemoteButton, profileID: UUID?) -> Bool {
+        if let override = applicationRapidPress(for: button, profileID: profileID) { return override }
         guard let profileID, profileID != selectedRemoteProfileID,
               let profile = remoteDeviceProfiles.first(where: { $0.id == profileID })
         else { return allowsRapidPress(for: button) }
@@ -2545,7 +2551,7 @@ final class AppSettings: ObservableObject {
     func exportedConfigurationData() throws -> Data {
         guard !applicationMappings.storageUnavailable else { throw AppConfigurationError.invalidValues }
         let configuration = PersonalizedConfiguration(
-            formatVersion: applicationMappings.profiles.isEmpty ? 2 : 3,
+            formatVersion: applicationMappings.profiles.contains { $0.interactions != nil || $0.timings != nil } ? 4 : (applicationMappings.profiles.isEmpty ? 2 : 3),
             gainDB: gainDB,
             selectedAudioDeviceUID: selectedAudioDeviceUID,
             macMicrophoneInputUID: macMicrophoneInputUID,
@@ -2785,7 +2791,7 @@ final class AppSettings: ObservableObject {
         // Do not call the external legacy importer: it filters and replaces records.
         let c = try JSONDecoder().decode(PersonalizedConfiguration.self,
             from: JSONSerialization.data(withJSONObject: configuration))
-        guard [1, 2, 3].contains(c.formatVersion) else { throw AppConfigurationError.invalidValues }
+        guard [1, 2, 3, 4].contains(c.formatVersion) else { throw AppConfigurationError.invalidValues }
         // Set the destination scope before applying mappings. Otherwise a regular
         // portable import can be overwritten by its pre-import device snapshot.
         if let preferences {
@@ -3207,7 +3213,7 @@ final class AppSettings: ObservableObject {
     private static func validatedConfiguration(from data: Data) throws -> PersonalizedConfiguration {
         let configuration = try JSONDecoder().decode(PersonalizedConfiguration.self, from: data)
         guard [1, 2].contains(configuration.formatVersion) ||
-                (configuration.formatVersion == 3 && ApplicationButtonMappingStore.isSupported &&
+                ([3, 4].contains(configuration.formatVersion) && ApplicationButtonMappingStore.isSupported &&
                  !(configuration.applicationButtonMappings ?? []).isEmpty) else {
             throw AppConfigurationError.unsupportedVersion
         }
@@ -3271,7 +3277,8 @@ final class AppSettings: ObservableObject {
         }
     }
 
-    func buttonInteractionSettings(profileID: UUID? = nil) -> RemoteButtonInteractionSettings {
+    func buttonInteractionSettings(profileID: UUID? = nil, applicationID: UUID? = nil,
+                                   useActiveApplication: Bool = true) -> RemoteButtonInteractionSettings {
         var result: RemoteButtonInteractionSettings
         if let profileID, profileID != selectedRemoteProfileID {
             result = remoteDeviceProfiles.first { $0.id == profileID }?.mappings.interactionSettings
@@ -3282,7 +3289,24 @@ final class AppSettings: ObservableObject {
         if let model = settingsModel(for: profileID ?? selectedRemoteProfileID) {
             result.timing = buttonGestureTiming(for: model)
         }
+        let application = applicationID.flatMap { id in applicationMappings.profiles.first { $0.id == id } }
+            ?? (useActiveApplication && customMappingEnabled ? applicationMappings.activeProfile : nil)
+        if let application {
+            for item in application.interactions ?? [] where item.device == (profileID ?? selectedRemoteProfileID) {
+                if let hold = item.hold {
+                    result.modes[item.button.rawValue] = hold.rawValue
+                    result.migratedRepeatButtons?.removeAll { $0 == item.button.rawValue }
+                }
+            }
+            if let model = settingsModel(for: profileID ?? selectedRemoteProfileID),
+               let timing = application.timings?[model.rawValue] { result.timing = timing }
+        }
         return result
+    }
+
+    func effectiveButtonGestureTiming(for model: XiaomiRemoteModel) -> RemoteButtonGestureTiming {
+        (customMappingEnabled ? applicationMappings.activeProfile?.timings?[model.rawValue] : nil)
+            ?? buttonGestureTiming(for: model)
     }
 
     func buttonGestureTiming(for model: XiaomiRemoteModel) -> RemoteButtonGestureTiming {
@@ -3349,7 +3373,7 @@ final class AppSettings: ObservableObject {
             repeatInterval: HIDRemoteTiming.repeatIntervalMilliseconds(for: button) ?? 100,
             opaqueDouble: opaque(.doubleClick), opaqueLong: opaque(.longPress))
         if let model = settingsModel(for: profileID) {
-            snapshot.repeatSingleStartMilliseconds = buttonGestureTiming(for: model)
+            snapshot.repeatSingleStartMilliseconds = effectiveButtonGestureTiming(for: model)
                 .repeatSingleStartMilliseconds
         }
         // 默认取基础层的动作；方案生效时由监听层按活动方案覆盖。

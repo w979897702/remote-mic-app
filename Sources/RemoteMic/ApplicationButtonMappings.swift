@@ -7,6 +7,20 @@ struct ApplicationButtonMapping: Codable, Equatable, Identifiable {
     var bundleIdentifier: String
     var displayName: String
     var bindings: [UnifiedButtonBinding] = []
+    // 可选字段兼容已有配置；缺少条目表示实时继承，false/once 是显式覆盖。
+    var interactions: [Interaction]? = nil
+    var timings: [String: RemoteButtonGestureTiming]? = nil
+
+    struct Interaction: Codable, Equatable {
+        var device: UUID?
+        var button: RemoteButton
+        var hold: RemoteButtonHoldMode?
+        var rapid: Bool?
+    }
+
+    func interaction(device: UUID?, button: RemoteButton) -> Interaction? {
+        interactions?.first { $0.device == device && $0.button == button }
+    }
 
     func binding(device: UUID?, button: RemoteButton, trigger: ButtonTrigger) -> ConfiguredButtonAction? {
         bindings.first { $0.remoteProfileID == device && $0.button == button && $0.trigger == trigger }?.configured
@@ -46,6 +60,16 @@ final class ApplicationButtonMappingStore: ObservableObject {
                   profile.bundleIdentifier.range(of: "^[A-Za-z0-9][A-Za-z0-9.-]*$", options: .regularExpression) != nil,
                   !profile.displayName.isEmpty, profile.displayName.count <= 256,
                   profile.bindings.count <= 16384 else { throw AppConfigurationError.invalidValues }
+            guard (profile.timings ?? [:]).allSatisfy({
+                XiaomiRemoteModel(rawValue: $0.key).map { $0 != .unknown } == true && $0.value.isValid
+            }) else { throw AppConfigurationError.invalidValues }
+            var interactionKeys = Set<String>()
+            for item in profile.interactions ?? [] {
+                guard interactionKeys.insert("\(item.device?.uuidString ?? "global")/\(item.button.rawValue)").inserted,
+                      item.hold?.isHoldDown != true || item.button.allowsKeyHold else {
+                    throw AppConfigurationError.invalidValues
+                }
+            }
             var keys = Set<String>()
             for binding in profile.bindings {
                 let key = "\(binding.remoteProfileID?.uuidString ?? "global")/\(binding.button.rawValue)/\(binding.trigger.rawValue)"
@@ -116,6 +140,46 @@ final class ApplicationButtonMappingStore: ObservableObject {
         if let value {
             updated[index].bindings.append(.init(remoteProfileID: device, button: button, trigger: trigger, configured: value))
         }
+        return replace(updated)
+    }
+
+    var activeProfile: ApplicationButtonMapping? {
+        guard Self.isSupported, !storageUnavailable else { return nil }
+        return profiles.first { $0.bundleIdentifier == activeBundleIdentifier }
+    }
+
+    func interaction(profile: UUID, device: UUID?, button: RemoteButton) -> ApplicationButtonMapping.Interaction? {
+        profiles.first { $0.id == profile }?.interaction(device: device, button: button)
+    }
+
+    @discardableResult
+    func writeInteraction(profile: UUID, device: UUID?, button: RemoteButton,
+                          update: (inout ApplicationButtonMapping.Interaction) -> Void) -> Bool {
+        guard let index = profiles.firstIndex(where: { $0.id == profile }) else { return false }
+        var updated = profiles
+        var item = updated[index].interaction(device: device, button: button)
+            ?? .init(device: device, button: button)
+        update(&item)
+        var items = updated[index].interactions ?? []
+        items.removeAll { $0.device == device && $0.button == button }
+        if item.hold != nil || item.rapid != nil { items.append(item) }
+        updated[index].interactions = items.isEmpty ? nil : items
+        AppLogger.shared.write("APP MAPPING operation_id=\(operation + 1) action=interaction button=\(button.rawValue) phase=requested result=requested hold_inherited=\(item.hold == nil) rapid_inherited=\(item.rapid == nil)")
+        return replace(updated)
+    }
+
+    func timing(profile: UUID, model: XiaomiRemoteModel) -> RemoteButtonGestureTiming? {
+        profiles.first { $0.id == profile }?.timings?[model.rawValue]
+    }
+
+    @discardableResult
+    func writeTiming(_ timing: RemoteButtonGestureTiming?, profile: UUID, model: XiaomiRemoteModel) -> Bool {
+        guard let index = profiles.firstIndex(where: { $0.id == profile }) else { return false }
+        var updated = profiles
+        var timings = updated[index].timings ?? [:]
+        timings[model.rawValue] = timing
+        updated[index].timings = timings.isEmpty ? nil : timings
+        AppLogger.shared.write("APP MAPPING operation_id=\(operation + 1) action=timing phase=requested result=requested inherit=\(timing == nil)")
         return replace(updated)
     }
 

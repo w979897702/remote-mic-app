@@ -1297,11 +1297,11 @@ final class HIDRemoteMonitor {
             let snapshot = interactionSnapshot(button: button, profileID: profileID)
             if snapshot.mode == .once, !snapshot.recognizesDouble, !snapshot.recognizesLong {
                 guard shouldAcceptRawPress(button: button, action: action,
-                    allowsRapidPress: hasSingleClickOverride ||
+                    allowsRapidPress: settings.applicationRapidPress(for: button, profileID: profileID) ?? (hasSingleClickOverride ||
                         settings.resolvedActionOverride(profileID, button, .doubleClick) != nil ||
                         settings.resolvedActionOverride(profileID, button, .longPress) != nil ||
                         snapshot.single.allowsSingleClickRepeat ||
-                        settings.allowsRapidPress(for: button, profileID: profileID),
+                        settings.allowsRapidPress(for: button, profileID: profileID)),
                     frontmostBundleIdentifier: frontmostBundleIdentifier()) else {
                     diagnosticLogger(
                         "HID PRESS rejected button=\(button.rawValue) " +
@@ -1312,7 +1312,7 @@ final class HIDRemoteMonitor {
                     continue
                 }
             }
-            diagnosticLogger("HID GESTURE button=\(button.rawValue) path=raw mode=\(snapshot.mode?.rawValue ?? "invalid") external_result=unknown")
+            diagnosticLogger("HID GESTURE button=\(button.rawValue) path=raw mode=\(snapshot.mode?.rawValue ?? "invalid") double_ms=\(snapshot.settings.doubleClickMilliseconds) long_ms=\(snapshot.settings.longPressMilliseconds) external_result=unknown")
             let target = frontmostBundleIdentifier()
             buttonInteractions.handle(.press, button: button, snapshot: snapshot,
                 valid: { [weak self] in
