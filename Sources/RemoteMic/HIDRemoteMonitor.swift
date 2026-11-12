@@ -1181,7 +1181,7 @@ final class HIDRemoteMonitor {
             )
             let preflightAction = settings.action(for: button, profileID: preflightProfileID)
             // An explicit binding owns the click even when it resolves to the same arrow.
-            let preflightHasSingleClickOverride = settings.configuredActionOverride?(
+            let preflightHasSingleClickOverride = settings.resolvedActionOverride(
                 preflightProfileID, button, .singleClick
             ) != nil || hasOverrideBinding(preflightProfileID, button, .singleClick)
             let usesNativePassthrough = preflightProfileID != nil &&
@@ -1219,7 +1219,7 @@ final class HIDRemoteMonitor {
             }
 
             // Discovery may associate an existing configured device during the callback.
-            let hasSingleClickOverride = settings.configuredActionOverride?(
+            let hasSingleClickOverride = settings.resolvedActionOverride(
                 profileID, button, .singleClick
             ) != nil || hasOverrideBinding(profileID, button, .singleClick)
 
@@ -1298,8 +1298,8 @@ final class HIDRemoteMonitor {
             if snapshot.mode == .once, !snapshot.recognizesDouble, !snapshot.recognizesLong {
                 guard shouldAcceptRawPress(button: button, action: action,
                     allowsRapidPress: hasSingleClickOverride ||
-                        settings.configuredActionOverride?(profileID, button, .doubleClick) != nil ||
-                        settings.configuredActionOverride?(profileID, button, .longPress) != nil ||
+                        settings.resolvedActionOverride(profileID, button, .doubleClick) != nil ||
+                        settings.resolvedActionOverride(profileID, button, .longPress) != nil ||
                         snapshot.single.allowsSingleClickRepeat ||
                         settings.allowsRapidPress(for: button, profileID: profileID),
                     frontmostBundleIdentifier: frontmostBundleIdentifier()) else {
@@ -1696,7 +1696,7 @@ final class HIDRemoteMonitor {
             )
             let hasOpaqueOverride = self.hasOverrideBinding(
                 self.profileID, button, .singleClick
-            ) && self.settings.configuredActionOverride?(
+            ) && self.settings.resolvedActionOverride(
                 self.profileID, button, .singleClick
             ) == nil
             guard current == configured, !hasOpaqueOverride else {
@@ -1771,7 +1771,7 @@ final class HIDRemoteMonitor {
     private func interactionSnapshot(button: RemoteButton, profileID: UUID) -> RemoteButtonInteractionSnapshot {
         var snapshot = settings.interactionSnapshot(for: button, profileID: profileID) { [self] trigger in
             hasOverrideBinding(profileID, button, trigger) &&
-                settings.configuredActionOverride?(profileID, button, trigger) == nil
+                settings.resolvedActionOverride(profileID, button, trigger) == nil
         }
         let repeated = snapshot.mode == .repeatLong ? snapshot.long : snapshot.single
         snapshot.repeatAllowed = Self.shouldRepeat(configured: repeated,
@@ -1815,6 +1815,10 @@ final class HIDRemoteMonitor {
             trigger: trigger,
             profileID: profileID
         )
+        if ApplicationButtonMappingStore.isSupported, !settings.applicationMappings.profiles.isEmpty {
+            let overridden = settings.applicationMappings.activeBinding(device: profileID, button: button, trigger: trigger) != nil
+            diagnosticLogger("APP MAPPING action=dispatch button=\(button.rawValue) trigger=\(trigger.rawValue) phase=resolved result=resolved scope=\(overridden ? "application" : "global")")
+        }
         if appSwitcherSession.isActive, button == .tv {
             return performAppSwitcherAction(for: button, trigger: trigger)
         }
@@ -2463,6 +2467,16 @@ final class HIDRemoteMonitor {
     }
 
     func cancelConfiguredInteractions(reason: String) { buttonInteractions.cancelAll(reason: reason) }
+
+    /// 前台切换只撤销普通按键的延迟动作，不重置语音或 Cmd+Tab 会话。
+    func cancelApplicationMappingInteractions() {
+        repeatTimers.values.forEach { $0.cancel() }
+        repeatTimers.removeAll()
+        lastPageRepeatAt.removeAll()
+        resetGestureRecognition()
+        diagnosticLogger("APP MAPPING action=cancel_pending phase=completed result=cancelled reason=frontmost_changed")
+    }
+
 
     func cancelPendingButtonActions() {
         repeatTimers.values.forEach { $0.cancel() }

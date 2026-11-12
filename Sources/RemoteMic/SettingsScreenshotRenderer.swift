@@ -104,7 +104,7 @@ enum SettingsScreenshotRenderer {
         let onlySection = ProcessInfo.processInfo.environment["REMOTE_MIC_SETTINGS_SCREENSHOT_SECTION"]
         let interactive = ProcessInfo.processInfo.environment["REMOTE_MIC_SETTINGS_SCREENSHOT_INTERACTIVE"] == "1"
         let mappingScenario = ProcessInfo.processInfo.environment["REMOTE_MIC_SETTINGS_SCREENSHOT_MAPPING_SCENARIO"]
-        if mappingScenario != nil {
+        if mappingScenario != nil && mappingScenario != "application" {
             guard let storage = ProcessInfo.processInfo.environment["SAYALL_MACRO_STORAGE_ROOT"],
                   URL(fileURLWithPath: storage).standardizedFileURL.path.hasPrefix(outputDirectory.standardizedFileURL.path + "/")
             else { throw RenderingError.profileFixtureRootRequired }
@@ -269,6 +269,14 @@ enum SettingsScreenshotRenderer {
         ].flatMap { name in
             model.macroFeature.mappingProfiles(device: nil).first { $0.name == name }?.id
         }
+        var applicationMappingID: UUID?
+        if mappingScenario == "application" {
+            applicationMappingID = settings.applicationMappings.add(bundleIdentifier: "org.example.Editor", displayName: "Example Editor")
+            if let id = applicationMappingID {
+                _ = settings.applicationMappings.write(.init(action: .commandCopy, shortcut: nil), profile: id,
+                    device: settings.selectedRemoteProfileID, button: .ok, trigger: .singleClick)
+            }
+        }
         if let mappingScenario {
             model.macroFeature.updateButtonProfilesAccess(.authorized)
             if ["member", "viewer", "copy", "disabled"].contains(mappingScenario) {
@@ -329,6 +337,7 @@ enum SettingsScreenshotRenderer {
                     ? holdEditorButton
                     : nil,
                 initialMappingProfileID: section == .mapping ? seededProfileID : nil,
+                initialApplicationMappingID: section == .mapping ? applicationMappingID : nil,
                 initialMappingSaveScenario: section == .mapping ? mappingScenario : nil,
                 initialShortcutPickerShowsKeyboard: showsStandardKeyboard,
                 initialMappingActionFilter: initialActionFilter,
@@ -371,6 +380,7 @@ enum SettingsScreenshotRenderer {
                     ? holdEditorButton
                     : nil,
                 initialMappingProfileID: section == .mapping ? seededProfileID : nil,
+                initialApplicationMappingID: section == .mapping ? applicationMappingID : nil,
                 initialMappingSaveScenario: section == .mapping ? mappingScenario : nil,
                 initialShortcutPickerShowsKeyboard: showsStandardKeyboard,
                 initialMappingActionFilter: initialActionFilter,
@@ -392,7 +402,9 @@ enum SettingsScreenshotRenderer {
             window.contentViewController = hostingController
             window.title = "SayAll — UI check"
             window.setContentSize(size)
-            window.orderFront(nil)
+            if ProcessInfo.processInfo.environment["REMOTE_MIC_SETTINGS_SCREENSHOT_OFFSCREEN"] != "1" {
+                window.orderFront(nil)
+            }
             if interactive {
                 // The production settings view uses isolated screenshot data;
                 // this bounded mode permits clicks without starting hardware.

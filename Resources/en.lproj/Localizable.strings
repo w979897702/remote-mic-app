@@ -1515,3 +1515,18 @@
 "button_mapping.save.hold_failed" = "Hold not saved";
 "button_mapping.action.no_action" = "No action";
 "button_mapping.profile.created" = "Key profile created";
+
+/* 按前台 App 自动切换的公开版按键覆盖 */
+"button_mapping.app.global" = "Global";
+"button_mapping.app.specific" = "App-specific";
+"button_mapping.app.add" = "Add App";
+"button_mapping.app.remove" = "Remove app mappings";
+"button_mapping.app.remove_hint" = "Remove all button overrides for this app and use global mappings. The app will not be uninstalled.";
+"button_mapping.app.global_hint" = "Global mappings apply to buttons without app-specific overrides.";
+"button_mapping.app.inherit_hint" = "Applies when this app is in front. Unset buttons inherit global mappings.";
+"button_mapping.app.inherited" = "Inheriting global mapping";
+"button_mapping.app.overridden" = "Using app-specific mapping";
+"button_mapping.app.restore" = "Use global";
+"button_mapping.app.save_failed" = "Could not read or save app mappings. Reload and try again.";
+"button_mapping.app.reload" = "Reload";
+"button_mapping.app.hold_global" = "Hold behavior, rapid presses, and gesture timing use global settings. Select Global to change them.";

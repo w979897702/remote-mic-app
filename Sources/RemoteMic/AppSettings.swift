@@ -46,6 +46,7 @@ private struct PersonalizedConfiguration: Codable {
     let buttonBindings: [String: ButtonAction]
     let buttonShortcuts: [String: CustomKeyboardShortcut]
     let unifiedBaseBindings: [UnifiedButtonBinding]?
+    let applicationButtonMappings: [ApplicationButtonMapping]?
     let buttonApplicationProfileIDs: [String: UUID]?
     let secondaryButtonBindings: [String: [String: ConfiguredButtonAction]]
     let buttonRapidPressEnabled: [String: Bool]?
@@ -375,6 +376,7 @@ final class AppSettings: ObservableObject {
     static let agentConfigurationPendingKey = Keys.onboardingAgentConfigurationPending
 
     private let defaults: UserDefaults
+    let applicationMappings: ApplicationButtonMappingStore
     private lazy var localUsageLedger = LocalUsageLedger(defaults: defaults,
         buttonCount: totalButtonPressCount, voiceDuration: totalVoiceDuration,
         longestVoice: voiceSessionRanking.map(\.duration).max() ?? 0)
@@ -952,6 +954,7 @@ final class AppSettings: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         var corruptedKeys: [String] = []
         self.defaults = defaults
+        applicationMappings = ApplicationButtonMappingStore(defaults: defaults)
         Self.restoreInterruptedOnboardingTrial(in: defaults)
         remoteDeviceProfiles = []
         selectedRemoteProfileID = nil
@@ -1311,6 +1314,13 @@ final class AppSettings: ObservableObject {
         }
         if let data = try? JSONEncoder().encode(interactionSettings) {
             defaults.set(data, forKey: "buttonInteractionSettings")
+        }
+        applicationMappings.onChange = { [weak self] in
+            guard let self else { return }
+            self.objectWillChange.send()
+            for device in [nil] + self.remoteDeviceProfiles.map({ Optional($0.id) }) {
+                self.onInteractionModeChanged?(device)
+            }
         }
         _ = localUsageLedger
     }
@@ -1680,6 +1690,7 @@ final class AppSettings: ObservableObject {
     /// 移除一个 APP 档案。调用方必须先确认没有任何绑定指向它，
     /// 否则那些按键会静默变成「尚未选择 APP」。
     func removeCustomApplicationProfile(id: UUID) {
+        guard !applicationMappings.profiles.flatMap(\.bindings).contains(where: { $0.configured.applicationProfileID == id }) else { return }
         guard customApplicationProfiles.contains(where: { $0.id == id }) else { return }
         customApplicationProfiles.removeAll { $0.id == id }
         if portablePendingApplications.contains(id.uuidString) {
@@ -1740,9 +1751,15 @@ final class AppSettings: ObservableObject {
         configuredAction(for: button, trigger: trigger, profileID: selectedRemoteProfileID)
     }
 
+    func resolvedActionOverride(_ profileID: UUID?, _ button: RemoteButton, _ trigger: ButtonTrigger) -> ConfiguredButtonAction? {
+        if customMappingEnabled, ApplicationButtonMappingStore.isSupported, applicationMappings.storageUnavailable { return .disabled }
+        return (customMappingEnabled ? applicationMappings.activeBinding(device: profileID, button: button, trigger: trigger) : nil)
+            ?? configuredActionOverride?(profileID, button, trigger)
+    }
+
     func configuredAction(for button: RemoteButton, trigger: ButtonTrigger,
                           profileID: UUID?) -> ConfiguredButtonAction {
-        (configuredActionOverride?(profileID, button, trigger)
+        (resolvedActionOverride(profileID, button, trigger)
             ?? configuredBaseAction(for: button, trigger: trigger, profileID: profileID))
             .normalizedForExecution
     }
@@ -2526,8 +2543,9 @@ final class AppSettings: ObservableObject {
     }
 
     func exportedConfigurationData() throws -> Data {
+        guard !applicationMappings.storageUnavailable else { throw AppConfigurationError.invalidValues }
         let configuration = PersonalizedConfiguration(
-            formatVersion: 2,
+            formatVersion: applicationMappings.profiles.isEmpty ? 2 : 3,
             gainDB: gainDB,
             selectedAudioDeviceUID: selectedAudioDeviceUID,
             macMicrophoneInputUID: macMicrophoneInputUID,
@@ -2540,6 +2558,7 @@ final class AppSettings: ObservableObject {
                 uniqueKeysWithValues: buttonShortcuts.map { ($0.key.rawValue, $0.value) }
             ),
             unifiedBaseBindings: unifiedBaseBindings,
+            applicationButtonMappings: applicationMappings.profiles,
             buttonApplicationProfileIDs: Dictionary(
                 uniqueKeysWithValues: buttonApplicationProfileIDs.map { ($0.key.rawValue, $0.value) }
             ),
@@ -2644,6 +2663,15 @@ final class AppSettings: ObservableObject {
         }
         try validate(configuration.buttonBindings, configuration.buttonShortcuts,
             configuration.buttonApplicationProfileIDs ?? [:], configuration.secondaryButtonBindings)
+        try ApplicationButtonMappingStore.validate(configuration.applicationButtonMappings ?? [])
+        if !ApplicationButtonMappingStore.isSupported, !(configuration.applicationButtonMappings ?? []).isEmpty {
+            throw AppConfigurationError.unsupportedVersion
+        }
+        for binding in (configuration.applicationButtonMappings ?? []).flatMap(\.bindings) {
+            guard binding.configured.applicationProfileID.map(appIDs.contains) ?? true else {
+                throw AppConfigurationError.invalidValues
+            }
+        }
         for binding in configuration.unifiedBaseBindings ?? [] {
             guard Self.validatedConfiguredAction(binding.configured) == binding.configured,
                   binding.configured.applicationProfileID.map(appIDs.contains) ?? true
@@ -2757,7 +2785,7 @@ final class AppSettings: ObservableObject {
         // Do not call the external legacy importer: it filters and replaces records.
         let c = try JSONDecoder().decode(PersonalizedConfiguration.self,
             from: JSONSerialization.data(withJSONObject: configuration))
-        guard [1, 2].contains(c.formatVersion) else { throw AppConfigurationError.invalidValues }
+        guard [1, 2, 3].contains(c.formatVersion) else { throw AppConfigurationError.invalidValues }
         // Set the destination scope before applying mappings. Otherwise a regular
         // portable import can be overwritten by its pre-import device snapshot.
         if let preferences {
@@ -2776,6 +2804,7 @@ final class AppSettings: ObservableObject {
         macMicrophoneInputUID = c.macMicrophoneInputUID ?? ""
         macMicrophoneShortcut = c.macMicrophoneShortcut.flatMap { $0.isMacMicrophoneCombination ? Self.validatedShortcut($0) : nil }
         if customMappingEnabled != c.customMappingEnabled { customMappingEnabled = c.customMappingEnabled }
+        guard applicationMappings.replace(c.applicationButtonMappings ?? []) else { throw AppConfigurationError.invalidValues }
         unifiedBaseBindings = c.unifiedBaseBindings ?? []
         buttonBindings = Dictionary(uniqueKeysWithValues: c.buttonBindings.compactMap { key,value in RemoteButton(rawValue: key).map { ($0,value) } })
         buttonShortcuts = Dictionary(uniqueKeysWithValues: c.buttonShortcuts.compactMap { key,value in RemoteButton(rawValue: key).map { ($0,value) } })
@@ -2860,6 +2889,10 @@ final class AppSettings: ObservableObject {
             fnTapModeEnabled: importedFnTapModeEnabled
         )
 
+        try ApplicationButtonMappingStore.validate(configuration.applicationButtonMappings ?? [])
+        if !ApplicationButtonMappingStore.isSupported, !(configuration.applicationButtonMappings ?? []).isEmpty {
+            throw AppConfigurationError.unsupportedVersion
+        }
         let importedBindings = Dictionary(
             uniqueKeysWithValues: configuration.buttonBindings
                 .compactMap { key, value -> (RemoteButton, ButtonAction)? in
@@ -2967,6 +3000,7 @@ final class AppSettings: ObservableObject {
         macMicrophoneShortcut = configuration.macMicrophoneShortcut.flatMap {
             $0.isMacMicrophoneCombination ? Self.validatedShortcut($0) : nil
         }
+        guard applicationMappings.replace(configuration.applicationButtonMappings ?? []) else { throw AppConfigurationError.invalidValues }
         customMappingEnabled = configuration.customMappingEnabled
         buttonBindings = Self.defaultBindings.merging(importedBindings) { _, imported in imported }
         buttonShortcuts = importedShortcuts
@@ -3060,7 +3094,7 @@ final class AppSettings: ObservableObject {
 
     /// `nil` when the binding carries a shortcut the app cannot trust. The whole binding goes,
     /// because a `customShortcut` action without its shortcut is a button that does nothing.
-    private static func validatedConfiguredAction(
+    static func validatedConfiguredAction(
         _ binding: ConfiguredButtonAction
     ) -> ConfiguredButtonAction? {
         if binding.action == .combinationAction {
@@ -3172,7 +3206,9 @@ final class AppSettings: ObservableObject {
 
     private static func validatedConfiguration(from data: Data) throws -> PersonalizedConfiguration {
         let configuration = try JSONDecoder().decode(PersonalizedConfiguration.self, from: data)
-        guard [1, 2].contains(configuration.formatVersion) else {
+        guard [1, 2].contains(configuration.formatVersion) ||
+                (configuration.formatVersion == 3 && ApplicationButtonMappingStore.isSupported &&
+                 !(configuration.applicationButtonMappings ?? []).isEmpty) else {
             throw AppConfigurationError.unsupportedVersion
         }
         // 兼容旧字段：静音时 `gainDB` 会落到下限，因此下界放宽到 `floorDecibels`。

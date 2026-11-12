@@ -5702,6 +5702,62 @@ struct RemoteButtonsTests {
     }
 }
 
+extension RemoteButtonsTests {
+    @Test func applicationMappingsRouteHIDAndCancelPendingGesturesOnSwitch() throws {
+        let suiteName = "RemoteButtonsTests.appMappings.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: defaults)
+        settings.customMappingEnabled = true
+        let device = try #require(settings.selectedRemoteProfileID)
+        settings.setBaseBinding(.init(action: .escape, shortcut: nil), for: .home, trigger: .singleClick, profileID: device)
+        let app = try #require(settings.applicationMappings.add(bundleIdentifier: "org.example.Editor", displayName: "Editor"))
+        #expect(settings.applicationMappings.write(.init(action: .commandCopy, shortcut: nil), profile: app,
+            device: device, button: .home, trigger: .singleClick))
+        #expect(settings.applicationMappings.write(.init(action: .commandPaste, shortcut: nil), profile: app,
+            device: device, button: .home, trigger: .doubleClick))
+        // 与全局方向相同的显式覆盖也必须经过映射，不能被原生透传吞掉。
+        #expect(settings.applicationMappings.write(.init(action: .arrowLeft, shortcut: nil), profile: app,
+            device: device, button: .left, trigger: .singleClick))
+        settings.applicationMappings.activate(bundleIdentifier: "org.example.Editor")
+        let scheduler = RemoteButtonsTestScheduler()
+        var performed: [ButtonAction] = []
+        var logs: [String] = []
+        let monitor = HIDRemoteMonitor(settings: settings, profileID: device, ownsEventSuppressor: false,
+            scheduler: scheduler, runtimePermissions: { true },
+            actionPerformer: { _, _, configured in performed.append(configured.action); return true },
+            frontmostBundleIdentifier: { settings.applicationMappings.activeBundleIdentifier },
+            diagnosticLogger: { logs.append($0) }, prepareNativeKeys: { true })
+        #expect(monitor.connectSimulatedDevice(fingerprint: "app-mapping-fixture", profileID: device))
+        let release = Data(repeating: 0, count: 6)
+        func press(_ button: RemoteButton) {
+            monitor.handleSimulatedReport(reportID: 1, data: Data([UInt8(button.hidUsage), 0, 0, 0, 0, 0]))
+            monitor.handleSimulatedReport(reportID: 1, data: release)
+        }
+        press(.home)
+        #expect(performed.isEmpty)
+        monitor.cancelApplicationMappingInteractions()
+        settings.applicationMappings.activate(bundleIdentifier: "org.example.Other")
+        scheduler.advance(toMilliseconds: 1000)
+        #expect(performed.isEmpty)
+        press(.home)
+        #expect(performed == [.escape])
+        settings.applicationMappings.activate(bundleIdentifier: "org.example.Editor")
+        monitor.cancelApplicationMappingInteractions()
+        press(.left)
+        #expect(performed.last == .arrowLeft)
+        #expect(logs.contains { $0.contains("scope=application") })
+        #expect(!logs.contains { $0.contains("org.example") || $0.contains("app-mapping-fixture") })
+        press(.home)
+        scheduler.advance(toMilliseconds: 1400)
+        #expect(performed.last == .commandCopy)
+        settings.customMappingEnabled = false
+        let count = performed.count
+        press(.home)
+        #expect(performed.count == count)
+    }
+}
+
 private final class RemoteButtonsTestScheduler: HIDRemoteScheduling {
     private final class Task: HIDRemoteScheduledTask {
         var deadlineMilliseconds: UInt64

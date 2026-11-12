@@ -1514,3 +1514,18 @@
 "button_mapping.save.hold_failed" = "按住未保存";
 "button_mapping.action.no_action" = "不执行";
 "button_mapping.profile.created" = "键位方案已创建";
+
+/* 按前台 App 自动切换的公开版按键覆盖 */
+"button_mapping.app.global" = "全局";
+"button_mapping.app.specific" = "App 专属";
+"button_mapping.app.add" = "添加 App";
+"button_mapping.app.remove" = "删除专属配置";
+"button_mapping.app.remove_hint" = "删除此 App 的全部专属按键映射，之后沿用全局配置。不会卸载 App。";
+"button_mapping.app.global_hint" = "全局配置用于没有专属映射的按键。";
+"button_mapping.app.inherit_hint" = "仅在此 App 位于前台时生效；未单独设置的按键沿用全局。";
+"button_mapping.app.inherited" = "当前沿用全局配置";
+"button_mapping.app.overridden" = "当前使用 App 专属配置";
+"button_mapping.app.restore" = "沿用全局";
+"button_mapping.app.save_failed" = "无法读取或保存专属配置，请重新加载后重试。";
+"button_mapping.app.reload" = "重新加载";
+"button_mapping.app.hold_global" = "按住方式、快速连按和按键速度沿用全局配置，请切换到“全局”修改。";

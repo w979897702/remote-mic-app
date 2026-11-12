@@ -231,3 +231,7 @@ Sparkle `2.9.6` 通过 SwiftPM 嵌入应用。更新源和 EdDSA 公钥位于应
 此模式仅用于本机自用，使用本机 Apple Development 证书，不要求 Developer ID、私有构件或 Sentry；不得用于分发。首次自动选择唯一的 Apple Development 身份，并把非秘密证书指纹固定在 `~/.sayall-local-signing-identity`；后续构建复用同一身份，证书不可用时停止，不回退 ad-hoc。多证书时须通过 `CODE_SIGN_IDENTITY` 指定证书指纹。公开兼容层不提供私有手机、Watch、Web 遥控等能力。系统权限需用户授权；从 ad-hoc 切换为开发证书时需重新授权一次，后续相同 Bundle ID 和开发身份保持稳定的 designated requirement。证书更换、失效或系统撤销权限时仍可能需要重新授权；虚拟麦克风驱动不由此脚本安装。默认不设置该变量时，仍按完整私有测试包要求执行。
 
 验证：运行上述命令，确认脚本的签名与包校验通过、安装位置正确、App 进程启动。再次执行应递增构建号并退出旧实例后替换。硬件语音、系统权限和第三方输入工具需另行实机验证，启动成功不代表这些流程已验收。
+
+### 公开自用版 App 专属按键
+
+按键页顶部“全局 / App 专属”使用公开 `NSWorkspace` 前台信息精确匹配 App。每台遥控器的单击、双击、长按独立覆盖，未配置项实时继承全局；语音、按住方式、快速连按和手势时间继续使用原配置。新数据独立存于 `publicApplicationButtonMappingsV1`，不复制私有组件实现或数据。有专属配置时备份写格式 3，使旧读取器明确拒绝；无专属配置继续写格式 2。覆盖安装沿用固定开发签名及原设置。验证边界见 [公开自用版 App 专属映射](Testing/PublicApplicationMappings.md)。

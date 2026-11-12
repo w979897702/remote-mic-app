@@ -1,0 +1,60 @@
+{
+  "batch": "local-app-mappings",
+  "date": "2026-11-12",
+  "purpose": "公开自用版 App 专属按键映射离屏布局检查",
+  "app_version": "2.0.0",
+  "app_build": "8",
+  "storage": "local",
+  "location": "~/Downloads/SayAll-app-mappings-review",
+  "capture": "production_view_offscreen_no_window_interaction",
+  "items": [
+    {
+      "file": "zh-Hans-light/mapping-1067x760.png",
+      "format": "PNG",
+      "width": 2134,
+      "height": 1520,
+      "sha256": "bc7894c27ba8010766a6401069aab347d3f768833ced8861eced912d199ae48b",
+      "url": null
+    },
+    {
+      "file": "zh-Hans-dark/mapping-1067x760.png",
+      "format": "PNG",
+      "width": 2134,
+      "height": 1520,
+      "sha256": "9145177ad96e9fdc84dfb7f6e65cc9feec765154301edad280a324fb4a231c8a",
+      "url": null
+    },
+    {
+      "file": "en-light/mapping-1067x760.png",
+      "format": "PNG",
+      "width": 2134,
+      "height": 1520,
+      "sha256": "581c232fcd0d05867056826f2b464d9aa1dabd01443d8e3a9d6861043061b8a6",
+      "url": null
+    },
+    {
+      "file": "en-dark/mapping-1067x760.png",
+      "format": "PNG",
+      "width": 2134,
+      "height": 1520,
+      "sha256": "d6b6be777b78841e1b777cd420c84c2889fc3ebb613459b59d3e2e4ce894df51",
+      "url": null
+    },
+    {
+      "file": "zh-Hans-light-editor/mapping-1067x760.png",
+      "format": "PNG",
+      "width": 2134,
+      "height": 1520,
+      "sha256": "af9e386db63255213f6a67329a2f7639aad6636d6b7b2896e0c9c5de8c78f515",
+      "url": null
+    },
+    {
+      "file": "en-dark-editor/mapping-1067x760.png",
+      "format": "PNG",
+      "width": 2134,
+      "height": 1520,
+      "sha256": "efb41a001968702ab5bea3c8f9c3f2c8a90531f3527e131a88aa2f6968f14d4b",
+      "url": null
+    }
+  ]
+}

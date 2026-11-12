@@ -1477,12 +1477,20 @@ final class BridgeAppModel: NSObject, ObservableObject, XiaomiBluetoothBridgeDel
                 guard let self else { return }
                 self.macMicrophoneShortcutAvailable = self.macMicrophoneHotKey.register(shortcut)
             }
+        settings.applicationMappings.activate(bundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
         for notification in [NSWorkspace.willSleepNotification, NSWorkspace.didActivateApplicationNotification,
                              NSWorkspace.sessionDidResignActiveNotification] {
             buttonLifecycleObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
                 forName: notification, object: nil, queue: .main
             ) { [weak self] _ in
                 guard let self else { return }
+                if notification == NSWorkspace.didActivateApplicationNotification,
+                   ApplicationButtonMappingStore.isSupported,
+                   !self.settings.applicationMappings.profiles.isEmpty {
+                    self.hidMonitors.values.forEach { $0.cancelApplicationMappingInteractions() }
+                    self.discoveryHIDMonitor?.cancelApplicationMappingInteractions()
+                }
+                self.settings.applicationMappings.activate(bundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
                 self.cancelConfiguredButtonInteractions(reason: "environment_changed")
                 self.hidMonitors.values.forEach { $0.cancelConfiguredInteractions(reason: "environment_changed") }
                 self.discoveryHIDMonitor?.cancelConfiguredInteractions(reason: "environment_changed")
@@ -3639,7 +3647,7 @@ final class BridgeAppModel: NSObject, ObservableObject, XiaomiBluetoothBridgeDel
     private func buttonInteractionSnapshot(_ button: RemoteButton, profileID: UUID?) -> RemoteButtonInteractionSnapshot {
         var snapshot = settings.interactionSnapshot(for: button, profileID: profileID) { [self] trigger in
             macroFeature.hasActiveBinding(profileID: profileID, button: button, trigger: trigger) &&
-                settings.configuredActionOverride?(profileID, button, trigger) == nil
+                settings.resolvedActionOverride(profileID, button, trigger) == nil
         }
         let resolved = resolvedHoldActions(device: profileID, button: button)
         snapshot.holdableSingle = resolved.single

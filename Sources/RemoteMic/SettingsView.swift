@@ -599,6 +599,7 @@ struct SettingsView: View {
     @ObservedObject private var privateFeature: PrivateFeatureIntegration
     @State private var preservesMappingContextOnNavigation = false
     @State private var editingMappingProfileID: UUID?
+    @State private var editingApplicationMappingID: UUID?
     @State private var mappingActionSave = ButtonMappingSaveState()
     @State private var mappingHoldSave = ButtonMappingSaveState()
     @State private var mappingProfileCreation: ButtonMappingProfileCreation?
@@ -701,6 +702,7 @@ struct SettingsView: View {
         initialMappingHoldEditingButton: RemoteButton? = nil,
         initialMappingEditingTrigger: ButtonTrigger = .singleClick,
         initialMappingProfileID: UUID? = nil,
+        initialApplicationMappingID: UUID? = nil,
         initialMappingSaveScenario: String? = nil,
         initialShortcutPickerShowsKeyboard: Bool = false,
         initialMappingActionFilter: String? = nil,
@@ -718,6 +720,7 @@ struct SettingsView: View {
         macroFeature = model.macroFeature
         membershipFeature = model.membershipFeature
         _editingMappingProfileID = State(initialValue: initialMappingProfileID)
+        _editingApplicationMappingID = State(initialValue: initialApplicationMappingID)
         if let initialMappingSaveScenario {
             var initialState = ButtonMappingSaveState()
             let outcome: ButtonMappingWriteRecovery.Outcome? = switch initialMappingSaveScenario {
@@ -2122,6 +2125,15 @@ struct SettingsView: View {
     }
 
     private func mappingDisplayConfiguration(for button: RemoteButton, trigger: ButtonTrigger) -> MappingDisplayValue<MappingBindingDisplay> {
+        if let profile = editingApplicationMappingID {
+            guard !settings.applicationMappings.storageUnavailable,
+                  settings.applicationMappings.profiles.contains(where: { $0.id == profile }) else { return .unavailable }
+            if let binding = settings.applicationMappings.binding(profile: profile, device: settings.selectedRemoteProfileID,
+                button: button, trigger: trigger) {
+                return .explicit(.init(configured: binding, compact: "", detailed: "", isEditable: true))
+            }
+            return .inherited
+        }
         guard let profile = editingMappingProfileID else {
             return .explicit(.init(configured: settings.configuredBaseAction(for: button, trigger: trigger),
                 compact: "", detailed: "", isEditable: true))
@@ -2153,6 +2165,19 @@ struct SettingsView: View {
     private func saveMappingBinding(_ configured: ConfiguredButtonAction?, button: RemoteButton, trigger: ButtonTrigger) {
         guard canWriteMappingBinding(button: button, trigger: trigger) else { return }
         mappingHoldSave = .init()
+        if let application = editingApplicationMappingID {
+            let device = settings.selectedRemoteProfileID
+            let outcome = ButtonMappingWriteRecovery.saveAction {
+                settings.applicationMappings.write(configured, profile: application, device: device, button: button, trigger: trigger)
+            } reload: {
+                settings.applicationMappings.reload()
+            } matches: {
+                settings.applicationMappings.binding(profile: application, device: device, button: button, trigger: trigger) == configured
+            } reconcileHold: { }
+            mappingActionSave.record(outcome, retry: .action(configured),
+                target: .init(profileID: application, deviceID: device, button: button, trigger: trigger))
+            return
+        }
         let profile = editingMappingProfileID
         let device = settings.selectedRemoteProfileID
         let operationID = UUID().uuidString
@@ -2369,7 +2394,18 @@ struct SettingsView: View {
     /// Profile capsules and create/copy entry stay fixed above the mapping canvas.
     private var mappingProfileToolbar: some View {
         VStack(spacing: 0) {
-            if macroFeature.supportsMappingProfileAutosave {
+            if ApplicationButtonMappingStore.isSupported {
+                ApplicationMappingToolbar(store: settings.applicationMappings, localization: localization,
+                    selection: $editingApplicationMappingID)
+                    .onChange(of: editingApplicationMappingID) { _ in
+                        editingMappingProfileID = nil
+                        clearMappingSaveFeedback()
+                        mappingHoldEditingButton = nil
+                        isMappingVoiceSettingsPresented = false
+                    }
+                    .onChange(of: settings.selectedRemoteProfileID) { _ in clearMappingSaveFeedback() }
+                    .onChange(of: mappingEditingTarget?.id) { _ in mappingActionSave = .init() }
+            } else if macroFeature.supportsMappingProfileAutosave {
                 mappingProfileSelector
                     .padding(.horizontal, 22)
                     .padding(.top, 8)
@@ -2780,6 +2816,7 @@ struct SettingsView: View {
                                     }
                                     if mappingActionFilter == .all || mappingActionFilter == .buttonSpeed {
                                         mappingGestureTimingSection
+                                            .disabled(editingApplicationMappingID != nil)
                                             .id("mapping-button-speed-tab")
                                     }
                                 }
@@ -3027,7 +3064,7 @@ struct SettingsView: View {
         }
         let holdFailed = mappingHoldSave.outcome == .failed || mappingHoldSave.outcome == .unknown
         let candidate = holdOnly || holdFailed ? mappingHoldSave : mappingActionSave
-        let current = ButtonMappingSaveTarget(profileID: editingMappingProfileID, deviceID: settings.selectedRemoteProfileID,
+        let current = ButtonMappingSaveTarget(profileID: editingApplicationMappingID ?? editingMappingProfileID, deviceID: settings.selectedRemoteProfileID,
             button: button, trigger: holdOnly || holdFailed ? nil : trigger)
         let state = candidate.target == current ? candidate : ButtonMappingSaveState()
         HStack(spacing: 6) {
@@ -3087,12 +3124,18 @@ struct SettingsView: View {
     }
 
     private func canWriteMappingHold(_ button: RemoteButton) -> Bool {
+        guard editingApplicationMappingID == nil else { return false }
         guard !isMappingProfilePreviewOnly else { return false }
         if let profile = editingMappingProfileID {
             if case .unavailable = macroFeature.displayProfileHoldMode(profile: profile, button: button) { return false }
             return ButtonTrigger.allCases.allSatisfy { canWriteMappingBinding(button: button, trigger: $0) }
         }
         return true
+    }
+
+    private func isApplicationBindingInherited(_ target: ShortcutEditingTarget) -> Bool {
+        if case .inherited = mappingDisplayConfiguration(for: target.button, trigger: target.trigger) { return true }
+        return false
     }
 
     private func mappingEditorPanel(_ target: ShortcutEditingTarget) -> some View {
@@ -3129,7 +3172,7 @@ struct SettingsView: View {
                             set: { disabled in
                                 var value = mappingConfiguration(for: target.button, trigger: target.trigger)
                                 value.action = disabled ? .disabled : .escape
-                                saveMappingBinding(!disabled && editingMappingProfileID != nil ? nil : value,
+                                saveMappingBinding(!disabled && (editingMappingProfileID != nil || editingApplicationMappingID != nil) ? nil : value,
                                     button: target.button, trigger: target.trigger)
                                 shortcutCaptureTarget = nil
                                 applicationShortcutCaptureProfileID = nil
@@ -3151,6 +3194,17 @@ struct SettingsView: View {
                     )
                 }
 
+                if editingApplicationMappingID != nil {
+                    HStack {
+                        Text(isApplicationBindingInherited(target) ? "button_mapping.app.inherited" : "button_mapping.app.overridden")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("button_mapping.app.restore") {
+                            saveMappingBinding(nil, button: target.button, trigger: target.trigger)
+                        }
+                        .disabled(isApplicationBindingInherited(target) || !canWriteMappingBinding(button: target.button, trigger: target.trigger))
+                    }
+                }
                 // 只读预览下只禁用会写入的部分；编辑区由下一次按键或手势选择替换。
                 mappingTriggerEditor(target.button, trigger: target.trigger)
                     .disabled(!canWriteMappingBinding(button: target.button, trigger: target.trigger))
@@ -3282,7 +3336,13 @@ struct SettingsView: View {
 
     private var mappingRestoreDefaultsButton: some View {
         Button("common.action.restore_defaults") {
-            if let profile = editingMappingProfileID {
+            if let profile = editingApplicationMappingID {
+                var mappings = settings.applicationMappings.profiles
+                if let index = mappings.firstIndex(where: { $0.id == profile }) {
+                    mappings[index].bindings.removeAll { $0.remoteProfileID == settings.selectedRemoteProfileID }
+                    _ = settings.applicationMappings.replace(mappings)
+                }
+            } else if let profile = editingMappingProfileID {
                 for button in RemoteButton.allCases {
                     for trigger in ButtonTrigger.allCases {
                         macroFeature.setProfileBinding(nil, profile: profile, button: button, trigger: trigger)
@@ -3957,7 +4017,9 @@ struct SettingsView: View {
                         .padding(.vertical, 4)
                         .background(Color.accentColor.opacity(0.12), in: Capsule())
                     Spacer()
-                    mappingSaveStatus(button: button, trigger: nil, holdOnly: true)
+                    if editingApplicationMappingID == nil {
+                        mappingSaveStatus(button: button, trigger: nil, holdOnly: true)
+                    }
                     Button("button_mapping.hold.clear") {
                         setMappingHoldMode(.once, for: button)
                     }
@@ -3966,6 +4028,10 @@ struct SettingsView: View {
                     .help(localization.text("button_mapping.hold.clear.help"))
                 }
 
+                if editingApplicationMappingID != nil {
+                    Text("button_mapping.app.hold_global")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
                 Text("button_mapping.hold.target")
                     .font(.system(size: 13, weight: .semibold))
 
@@ -4110,7 +4176,7 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Color.accentColor)
-                .disabled(profileUnsupported)
+                .disabled(profileUnsupported || editingApplicationMappingID != nil)
                 .padding(10)
             }
         }
@@ -4381,6 +4447,7 @@ struct SettingsView: View {
                     get: { settings.allowsRapidPress(for: button) },
                     set: { settings.setAllowsRapidPress($0, for: button) }
                 ))
+                .disabled(editingApplicationMappingID != nil)
                 .labelsHidden()
                 .toggleStyle(.switch)
             }
@@ -5178,6 +5245,8 @@ struct SettingsView: View {
     @ViewBuilder
     private func applicationBindingSection(_ profile: CustomApplicationProfile) -> some View {
         let bindings = applicationBindings(for: profile)
+        let applicationOverrideCount = settings.applicationMappings.profiles.flatMap(\.bindings)
+            .filter { $0.configured.applicationProfileID == profile.id }.count
         VStack(alignment: .leading, spacing: 8) {
             Text("custom_application.bindings.title")
                 .font(.system(size: 14, weight: .semibold))
@@ -5242,7 +5311,7 @@ struct SettingsView: View {
             Divider()
                 .padding(.top, 2)
 
-            if bindings.isEmpty {
+            if bindings.isEmpty && applicationOverrideCount == 0 {
                 Button(role: .destructive) {
                     applicationPendingRemoval = profile
                 } label: {
@@ -5254,9 +5323,9 @@ struct SettingsView: View {
             } else {
                 Text(String(
                     format: localization.text("custom_application.remove_blocked"),
-                    bindings.count
+                    max(bindings.count, applicationOverrideCount)
                 ))
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -5906,7 +5975,7 @@ struct SettingsView: View {
 
     private func mappingActionSummary(for button: RemoteButton, trigger: ButtonTrigger,
                                       configuredAction: ConfiguredButtonAction? = nil) -> String {
-        if configuredAction == nil, editingMappingProfileID != nil {
+        if configuredAction == nil, editingMappingProfileID != nil || editingApplicationMappingID != nil {
             switch mappingDisplayConfiguration(for: button, trigger: trigger) {
             case let .explicit(value):
                 if let configured = value.configured {
@@ -5925,7 +5994,7 @@ struct SettingsView: View {
         let configured = configuredAction ?? mappingConfiguration(for: button, trigger: trigger)
         if configured.action == .disabled {
             let explicit = settings.unifiedBaseBindings.contains { $0.remoteProfileID == settings.selectedRemoteProfileID && $0.button == button && $0.trigger == trigger }
-            return localization.text(editingMappingProfileID != nil || explicit ? "button_mapping.action.no_action" : "button_mapping.action.not_set")
+            return localization.text(editingMappingProfileID != nil || editingApplicationMappingID != nil || explicit ? "button_mapping.action.no_action" : "button_mapping.action.not_set")
         }
         return actionSummary(configured)
     }
