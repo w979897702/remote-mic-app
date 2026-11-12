@@ -1,6 +1,7 @@
 import AppKit
 import CoreBluetooth
 import Foundation
+import IOKit.hid
 
 struct AgentConfigurationResult: Codable, Equatable {
     enum Status: String, Codable {
@@ -299,22 +300,42 @@ enum AgentConfigurationCommand {
     }
 
     private struct RemoteCandidate {
-        let profileID: UUID
+        let profileID: UUID?
         let source: OnboardingControlSource
     }
 
     private static func connectedRemoteCandidates(
         settings: AppSettings
     ) -> [RemoteCandidate] {
-        settings.remoteDeviceProfiles.compactMap { profile in
-            guard profile.bluetoothIdentifier != nil || profile.hidFingerprint != nil else {
-                return nil
-            }
-            return RemoteCandidate(
-                profileID: profile.id,
-                source: controlSource(for: profile.model)
+        // 首次配置可能尚无档案；只读枚举当前 HID，不打开设备或订阅按键。
+        // VID/PID 与生产 HIDRemoteMonitor 的小米匹配条件保持一致。
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        IOHIDManagerSetDeviceMatching(manager, [
+            kIOHIDVendorIDKey as String: 0x2717,
+            kIOHIDProductIDKey as String: 0x32B8,
+        ] as CFDictionary)
+        let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> ?? []
+        let fingerprints = Set(devices.compactMap { HIDRemoteMonitor.fingerprint(for: $0) })
+        let xiaomiCandidates = fingerprints.sorted().map { fingerprint in
+            RemoteCandidate(
+                profileID: settings.remoteDeviceProfiles.first {
+                    !$0.model.usesPrivateAdapter && $0.hidFingerprint == fingerprint
+                }?.id,
+                source: .xiaomiRemote
             )
         }
+        // 私有来源继续由原有档案路径提供；本次只修复小米首次发现。
+        let privateCandidates = settings.remoteDeviceProfiles.compactMap { profile -> RemoteCandidate? in
+            guard profile.model.usesPrivateAdapter,
+                  profile.bluetoothIdentifier != nil || profile.hidFingerprint != nil else {
+                return nil
+            }
+            return RemoteCandidate(profileID: profile.id, source: controlSource(for: profile.model))
+        }
+        AppLogger.shared.write(
+            "ONBOARDING AI_CONFIG discovery=xiaomi_hid candidates=\(xiaomiCandidates.count)"
+        )
+        return xiaomiCandidates + privateCandidates
     }
 
     private static func supportedAudioDevice() -> AudioDeviceInfo? {
