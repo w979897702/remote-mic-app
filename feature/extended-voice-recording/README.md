@@ -40,3 +40,7 @@ RC003 一直按住语音键时可能在约 60 秒结束 ATVV 会话。同时，i
 | 会话结束 | 恢复当前连接状态的普通图标 | 不追加协议事件 |
 
 不显示精确倒计时。其他型号不触发颜色或提示音。详细操作和真机证据见 [`Testing/StatusBarConnectionAppearance.md`](../../Testing/StatusBarConnectionAppearance.md)。
+
+### 2026-11-15 RC001 本机续期候选
+
+普通路径默认仍不续期；本机实验开关开启后，仅 RC001 的 ATVV v1.0 真实物理语音会话每 10 秒提交当前 session 的 `MIC_EXTEND`，不要求主机预先 `MIC_OPEN`。停止、关闭或断连取消续期；不自动重开、不改变音频收尾。两分钟真实音频与文字验收待用户完成，操作见 [测试手册](../../Testing/RC001VoiceExtension.md)。

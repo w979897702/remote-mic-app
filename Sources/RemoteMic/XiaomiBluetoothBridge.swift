@@ -158,6 +158,9 @@ final class XiaomiBluetoothBridge: NSObject {
     private var decoder = IMAADPCMDecoder()
     private var accumulator = FrameAccumulator()
     private var pendingSync: (predictor: Int, stepIndex: Int)?
+    private var identifiedModel: XiaomiRemoteModel?
+    private let rc001VoiceExtension = RC001VoiceExtension()
+    private var rc001ExtensionConsidered = false
     private var streaming = false
     private var microphoneOpened = false
     private var cancelledMicrophoneOpenAt: Date?
@@ -439,6 +442,8 @@ final class XiaomiBluetoothBridge: NSObject {
 
     @discardableResult
     func requestMicrophoneClose() -> Bool {
+        rc001VoiceExtension.stop(reason: "host_close")
+        rc001ExtensionConsidered = true
         guard microphoneOpened || streaming else { return true }
         let cancelledOpenAt = ATVVSessionGate.cancelledOpenDate(
             microphoneOpened: microphoneOpened,
@@ -644,6 +649,7 @@ final class XiaomiBluetoothBridge: NSObject {
     }
 
     private func resetPeripheral() {
+        identifiedModel = nil
         stopBatteryPolling(reason: "peripheral_reset")
         peripheral?.delegate = nil
         peripheral = nil
@@ -724,6 +730,8 @@ final class XiaomiBluetoothBridge: NSObject {
     }
 
     private func resetSession() {
+        rc001VoiceExtension.stop(reason: "session_reset")
+        rc001ExtensionConsidered = false
         audioDiagnostics?.discardPartial(bytes: accumulator.pending.count)
         audioDiagnostics?.stop(reason: "session_reset")
         if streaming {
@@ -1023,6 +1031,10 @@ final class XiaomiBluetoothBridge: NSObject {
         case 0x00:
             guard lifecycle.acceptsProtocolData(generation: generation) else { return }
             audioDiagnostics?.control(.stop, at: controlAt)
+            AppLogger.shared.write(
+                "ATVV STREAM stop_received operation_id=\(audioDiagnostics?.operationID ?? 0) " +
+                    "remote_reason=\(bytes.count > 1 ? String(bytes[1]) : "unknown")"
+            )
             stopStreaming()
         case 0x0A:
             guard lifecycle.acceptsProtocolData(generation: generation) else { return }
@@ -1071,11 +1083,13 @@ final class XiaomiBluetoothBridge: NSObject {
         lastStopAt = nil
         guard !streaming else { return }
         streaming = true
+        rc001ExtensionConsidered = implicit
         delegate?.bluetoothBridgeDidStartVoice(self)
         AppLogger.shared.write("ATVV STREAM START session=\(sessionID)")
     }
 
     private func stopStreaming() {
+        rc001VoiceExtension.stop(reason: "remote_stop")
         guard streaming else { return }
         streaming = false
         audioDiagnostics?.stop(reason: "remote_stop")
@@ -1135,6 +1149,25 @@ final class XiaomiBluetoothBridge: NSObject {
             // 否则蓝牙链路会被放大两次，音量含义也会和其它遥控器不一致。
             let samples = PCMPostprocessor.process(decoded, gainDB: 0)
             audioDiagnostics?.decoded(bytes: frame.count, samples: samples.count)
+            if !rc001ExtensionConsidered {
+                rc001ExtensionConsidered = true
+                let expectedSession = sessionID
+                let expectedOperation = audioDiagnostics?.operationID
+                rc001VoiceExtension.start(
+                    enabled: UserDefaults.standard.bool(forKey: RC001VoiceExtension.preferenceKey),
+                    model: identifiedModel, version: capabilities.version,
+                    sessionID: sessionID, operationID: audioDiagnostics!.operationID
+                ) { [weak self] command in
+                    guard let self, streaming, !microphoneOpened,
+                          lifecycle == .ready(generation),
+                          sessionID == expectedSession,
+                          audioDiagnostics?.operationID == expectedOperation,
+                          let peripheral, peripheral.state == .connected,
+                          peripheral.canSendWriteWithoutResponse
+                    else { return false }
+                    return write(command)
+                }
+            }
             delegate?.bluetoothBridge(self, didDecode: samples)
         }
     }
@@ -1703,6 +1736,7 @@ extension XiaomiBluetoothBridge {
             AppLogger.shared.write(
                 "BLE MODEL identified=\(model.rawValue) modelNumber=\(normalizedModelNumber)"
             )
+            identifiedModel = model
             delegate?.bluetoothBridge(self, didIdentifyRemoteModel: model)
             return
         }
