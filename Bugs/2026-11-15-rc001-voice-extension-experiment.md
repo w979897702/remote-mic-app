@@ -9,3 +9,9 @@
 定向 SwiftPM 回归 94 项通过，规范与链接检查通过；独立 self-test 脚本因基线漏列 App 专属映射依赖编译失败，Release 构建和签名校验通过，已安装本机 Build 11；实机步骤与边界见 [测试手册](../Testing/RC001VoiceExtension.md)。未完成真机验证前不合入或创建功能完成 PR。
 
 本次用户明确授权直接在 main 修改，并允许 public 本机测试包使用现有 Apple Development 证书。未上传或发布；测试包如实保留 source_commit 与 dirty 标记。
+
+## 通配目标第二轮
+
+第一轮 Build 11 在 10/20/30/40/50 秒分别提交精确 session=11 的续期，60000ms 仍收到 remote_reason=2，host_close_requests=0；无本地丢弃或中断样本。用户全程未松键，因此续期效果失败；仍无法证明固件接受命令，也不能仅凭原因码断言真正发生物理松键。
+
+用户授权改为 MIC_EXTEND(0xFF) 对照。只改变命令目标并记录 target_session=255，保留本机连接与会话隔离、取消、音频排空行为。同范围 94 项 SwiftPM 定向测试和规范、链接、差异检查通过；构建与签名结果以本轮交付记录为准，真机待验收。

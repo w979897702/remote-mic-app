@@ -14,13 +14,13 @@ struct RC001VoiceExtensionTests {
         scheduler.advance(by: 9.99)
         #expect(writes.isEmpty)
         scheduler.advance(by: 115.01)
-        #expect(writes == Array(repeating: Data([0x0E, 8]), count: 12))
+        #expect(writes == Array(repeating: Data([0x0E, 0xFF]), count: 12))
         lease.stop(reason: "remote_stop")
         scheduler.advance(by: 20)
         #expect(writes.count == 12)
         #expect(scheduler.pendingTaskCount == 0)
         #expect(logs.last?.contains("submitted_count=12") == true)
-        #expect(logs.contains { $0.contains("remote_ack=unavailable") })
+        #expect(logs.contains { $0.contains("session=8 target_session=255 remote_ack=unavailable") })
     }
 
     @Test func disabledOtherModelsLegacyAndHostSessionsNeverWrite() {
@@ -54,7 +54,7 @@ struct RC001VoiceExtensionTests {
         lease.start(enabled: true, model: .rc001, version: 0x0100,
                     sessionID: 2, operationID: 2) { writes.append($0); return true }
         scheduler.advance(by: 10)
-        #expect(writes.last == Data([0x0E, 2]))
+        #expect(writes.last == Data([0x0E, 0xFF]))
         lease.stop(reason: "session_reset")
         scheduler.advance(by: 20)
         #expect(writes.count == 2)
@@ -80,7 +80,7 @@ struct RC001VoiceExtensionTests {
         callbacks[0]()
         #expect(writes.isEmpty)
         callbacks[1]()
-        #expect(writes == [Data([0x0E, 2])])
+        #expect(writes == [Data([0x0E, 0xFF])])
         lease.stop(reason: "host_close")
         callbacks[2]()
         #expect(writes.count == 1)

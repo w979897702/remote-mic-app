@@ -34,7 +34,7 @@ final class RC001VoiceExtension {
         }
         self.operationID = operationID
         submitted = 0
-        log("RC001 VOICE EXTEND operation_id=\(operationID) phase=started interval_ms=10000 session=\(sessionID)")
+        log("RC001 VOICE EXTEND operation_id=\(operationID) phase=started interval_ms=10000 session=\(sessionID) target_session=255")
         scheduleNext(generation: generation, sessionID: sessionID, submit: submit)
     }
 
@@ -51,9 +51,9 @@ final class RC001VoiceExtension {
                               submit: @escaping (Data) -> Bool) {
         task = schedule(10) { [weak self] in
             guard let self, generation == expected, let operationID else { return }
-            // 已由 start 确认协议版本；使用精确 session，避免续期到别的会话。
-            let written = submit(Data([0x0E, sessionID]))
-            log("RC001 VOICE EXTEND operation_id=\(operationID) phase=write result=\(written ? "submitted" : "rejected") session=\(sessionID) remote_ack=unavailable")
+            // 第二轮对照使用协议通配目标；旧回调仍由 generation 和桥接层会话校验拦截。
+            let written = submit(Data([0x0E, 0xFF]))
+            log("RC001 VOICE EXTEND operation_id=\(operationID) phase=write result=\(written ? "submitted" : "rejected") session=\(sessionID) target_session=255 remote_ack=unavailable")
             guard written else {
                 stop(reason: "write_rejected")
                 return

@@ -6,7 +6,7 @@
 
 实验开关 `SayAllRC001VoiceExtendExperiment` 默认缺失/关闭。本次经用户授权使用 public 本机测试包、Apple Development 签名；私有组件不可用，不是分发候选。安装位置为 `~/Applications/SayAll.app`，沿用已有权限与虚拟麦克风设置。
 
-启动后按下立即沿原路径收音；首个真实 PCM 后每 10 秒提交当前会话的 `MIC_EXTEND`。松键、关闭请求、断连或会话重置取消续期，不自动重开麦克风，不修改 Fn、音频排空或时长上限。53/57 秒提醒保留，只代表原硬件边界，不表示实验失败。
+启动后按下立即沿原路径收音；首个真实 PCM 后每 10 秒提交 `MIC_EXTEND(0xFF)`（字节 `0E FF`）。松键、关闭请求、断连或会话重置取消续期，不自动重开麦克风，不修改 Fn、音频排空或时长上限。53/57 秒提醒保留，只代表原硬件边界，不表示实验失败。
 
 ## 操作与判定
 
@@ -15,7 +15,7 @@
 3. 松键后应结束同一次语音输入，末句完整；再次按下说短句，应立即开始新会话。
 4. 若 60 秒附近仍停止，记下北京时间和现象，停止本轮；不要将发送命令日志视为续期成功。
 
-通过必须同时满足：超过 120 秒仍收到真实 PCM、目标工具持续接收文字、松键结束、尾音自然排空。`RC001 VOICE EXTEND ... result=submitted remote_ack=unavailable` 只证明提交蓝牙写入，不代表固件接受。最终同一 `operation_id` 的 `ATVV AUDIO diagnostic` 应有 `completion=normal`、`dropped_samples=0`、`interrupted_samples=0`、`pending_samples=0`，播放与调度样本一致。
+通过必须同时满足：超过 120 秒仍收到真实 PCM、目标工具持续接收文字、松键结束、尾音自然排空。`RC001 VOICE EXTEND ... result=submitted ... target_session=255 remote_ack=unavailable` 只证明提交蓝牙写入，不代表固件接受。最终同一 `operation_id` 的 `ATVV AUDIO diagnostic` 应有 `completion=normal`、`dropped_samples=0`、`interrupted_samples=0`、`pending_samples=0`，播放与调度样本一致。
 
 失败包括：60 秒仍停止、只有控制消息没有音频、文字中断或首尾字丢失、松键后继续收音、重复 Fn 或额外会话、断连后无法恢复。协议停止事件另记录 `remote_reason`（十进制）；8 表示协议定义的传输超时，2 表示松键，不能据此假定所有固件完全遵循规范。
 
@@ -41,3 +41,11 @@
 - Release 构建、Apple Development 签名、`codesign --verify --deep --strict` 和 `verify-app.sh`：通过；本机候选版本 2.0.0（Build 11），source_commit=e4421bb36a8d5d856b0cd3f209b622517aa2b135，dirty=true。
 - 代理未操作实体遥控器；两分钟续期、松键尾字、异常恢复由用户实测，当前均待验证。
 - 原始证据：2026-11-15 17:36:48 至 17:37:48（北京时间），RC001 会话 108 持续 59985ms、`reason=remote_stop`、`host_close_requests=0`；用户确认全程未松键。
+
+## 第二轮：通配会话目标对照
+
+Build 11 第一轮失败：2026-11-15 18:06:22 至 18:07:22（北京时间），精确 session=11 的续期提交 5 次，仍在 60000ms 收到 `remote_reason=2`；用户确认未松键。该码按协议表示松键，固件内部原因仍未知。
+
+本轮只把命令目标改为 `0xFF`，间隔仍为 10 秒。日志保留真实 `session`，另加 `target_session=255` 识别命令目标。本机仍校验连接 generation、真实 session 和 operation，旧定时器不能作用于新会话。再次按上述步骤长按 125 秒；有提交日志仍不能单独判定固件接受。
+
+本轮同范围 94 项 SwiftPM 定向测试、仓库规范、Markdown 链接和差异检查通过。构建号、安装与签名结果以本轮交付记录为准；两分钟真机验收待用户完成。前文 Build 11 的验证记录仅属于第一轮，旧式自测脚本的基线缺陷仍未修改。
